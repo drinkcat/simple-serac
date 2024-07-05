@@ -173,20 +173,20 @@ def remoteCheck(s3):
     jsonfiles = [file for file in files if file.startswith("db/") and file.endswith(".json")]
     tarfiles = [file for file in files if file.startswith("data/") and file.endswith(".tar")]
 
-    for json in jsonfiles:
-        base = json.removeprefix("db/").removesuffix(".json")
-        if not "data/" + base + ".tar" in tarfiles:
+    for jsonfile in jsonfiles:
+        base = jsonfile.removeprefix("db/").removesuffix(".json")
+        if "data/" + base + ".tar" not in tarfiles:
             raise SystemError(f"Error on remote: {base}.json without the corresponding tar.")
 
     for tar in tarfiles:
         base = tar.removeprefix("data/").removesuffix(".tar")
-        if not "db/" + base + ".json" in jsonfiles:
+        if "db/" + base + ".json" not in jsonfiles:
             print(f"WARNING: Remote {base}.tar without the corresponding json.")
         if files[tar].storageclass != "DEEP":
-            print(f"WARNING: Remote {tar} in incorrect storage class {files[tar].storageclass}.")
+            print(f"WARNING: Remote {tarfile} in incorrect storage class {files[tar].storageclass}.")
 
     for file in files:
-        if not file in jsonfiles and not file in tarfiles:
+        if file not in jsonfiles and file not in tarfiles:
             print(f"WARNING: Remote {file} not supposed to be in bucket.")
 
 ### Main
@@ -212,7 +212,7 @@ tarfileindex = 0
 if not os.path.isdir(dbcachedir):
     os.makedirs(dbcachedir)
 
-print(f"Syncing database...")
+print("Syncing database...")
 s3 = SimpleS3(outurl)
 remoteCheck(s3)
 s3.download_dir(dbcachedir, "db")

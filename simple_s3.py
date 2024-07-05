@@ -2,7 +2,6 @@
 
 import boto3
 import dataclasses
-import hashlib
 import os
 import sys
 import urllib.parse
@@ -26,7 +25,7 @@ class SimpleS3:
         self.files = None
         parse = urllib.parse.urlparse(url)
         if parse.scheme != "s3":
-            raise SystemError(f"Weird name {name} does not start with {prefix}")
+            raise SystemError(f"Bad URL {url} does not start with s3.")
         self.bucket = parse.netloc
         self.prefix = addslash(parse.path)
 

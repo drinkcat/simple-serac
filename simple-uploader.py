@@ -8,6 +8,8 @@ import sys
 import tarfile
 from datetime import datetime, timezone
 
+import simple_s3
+
 def humanSize(size):
     suffix = ['', 'k', 'M', 'G']
     i = 0
@@ -15,6 +17,8 @@ def humanSize(size):
         size = size // 1024
         i += 1
     return f"{size}{suffix[i]}"
+
+### Database related functions
 
 class DatabaseEncoder(json.JSONEncoder):
     def default(self, o):
@@ -69,6 +73,39 @@ class Database:
         with open(outfile, "w") as dbfile:
             json.dump(self, dbfile, cls=DatabaseEncoder, indent=4)
 
+def readDatabase(dbdir):
+    # Read existing database
+    db = {}
+    dbfiles = [f for f in os.listdir(dbdir) if f.endswith(".json")]
+    dbfiles.sort()
+    for j in dbfiles:
+        with open(os.path.join(dbdir, j), "r") as read_content:
+            try:
+                jsondata = json.load(read_content)
+            except Exception as e:
+                raise ValueError(f"Database error in {j}.") from e
+            if jsondata["version"] != DBVERSION:
+                raise SystemError(f"Database version error in {j}: {jsondata["version"]}")
+            for file in jsondata["data"]:
+                fe = FileEntry.from_dict(file, j)
+                db[fe.name] = fe
+    return db
+
+def listFiles(indir):
+    # List all files in input directory
+    inlist = []
+    for folder, subs, files in os.walk(indir, followlinks=False):
+        # Trim prefix (this could be done with os.path functions?)
+        if not folder.startswith(indir):
+            raise SystemError(f"Weird folder {folder} does not start with {indir}")
+        folder = folder[len(indir)+1:]
+
+        inlist += map(lambda f: os.path.join(folder, f), files)
+
+    # Sort for consistency
+    inlist.sort()
+    return inlist
+
 def createTar(tardb, size):
     global tarfileindex
 
@@ -78,103 +115,88 @@ def createTar(tardb, size):
     print(f"Creating tar {basefilepath} with {len(tardb.data)} files ({size}).")
 
     # TODO: Use tmp directory
-    with tarfile.open(os.path.join(dbdir, basefilepath + ".tar"), "w") as tar:
+    with tarfile.open(os.path.join(cachedir, basefilepath + ".tar"), "w") as tar:
         for fileentry in tardb.data:
             tar.add(os.path.join(indir, fileentry.name),
                 arcname=fileentry.name, recursive="False")
     # TODO: Upload tar and delete
 
-    tardb.writeJson(os.path.join(dbdir, basefilepath + ".json"))
+    tardb.writeJson(os.path.join(cachedir, basefilepath + ".json"))
     # TODO: Upload json
+
+def createTars(db, inlist):
+    # Database for the current output tar
+    tardb = Database()
+    size = 0
+    totalskip = 0
+    lastskip = 0
+    totalwritten = 0
+
+    for file in inlist:
+        fileentry = FileEntry.gen(indir, file)
+
+        # TODO: Find in database and skip if needed
+        dbfile = db.get(file)
+        if dbfile and dbfile.sha == fileentry.sha:
+            totalskip += 1
+            if totalskip >= lastskip+1000:
+                print(f"Skipped {totalskip} files so far.")
+                lastskip = totalskip
+            continue
+
+        totalwritten += 1
+
+        size += fileentry.size
+        tardb.add(fileentry)
+        if size > MINSIZE:
+            if totalskip > lastskip:
+                print(f"Skipped {totalskip} files so far.")
+                lastskip = totalskip
+
+            createTar(tardb, humanSize(size))
+            tardb = Database()
+            size = 0
+
+    # Create the last archive
+    if len(tardb.data) > 0:
+        createTar(tardb, humanSize(size))
+
+    return (totalwritten, totalskip)
+
+### Main
 
 # 128 MB chunks is a good sweet spot pricing-wise
 # Note that chunks can be larger as we only fit in full files.
 MINSIZE=128*1024*1024
+# TODO: remove
+MINSIZE=16*1024*1024
 
-if len(sys.argv) != 2:
-    print("Usage: python s3-uploader.py indir")
+if len(sys.argv) != 3:
+    print("Usage: python s3-uploader.py indir s3://bucket/target")
     exit()
 
+indir = os.path.abspath(sys.argv[1])
+outurl = sys.argv[2]
+
 # TODO: Better location for database cache
-dbdir = "/home/drinkcat/.cache/s3-uploader/one/"
+cachedir = "/home/drinkcat/.cache/simple-uploader/one/"
 
 tarfileprefix = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 tarfileindex = 0
 
-indir = os.path.abspath(sys.argv[1])
-
-if not os.path.isdir(dbdir):
-    os.makedirs(dbdir)
+if not os.path.isdir(cachedir):
+    os.makedirs(cachedir)
 
 # TODO: Sync database with remote
+s3 = SimpleS3(outurl)
+s3.list_files()
+# TODO: Sanity check
 
-# Read existing database
-db = {}
-dbfiles = [f for f in os.listdir(dbdir) if f.endswith(".json")]
-dbfiles.sort()
-for j in dbfiles:
-    with open(os.path.join(dbdir, j), "r") as read_content:
-        try:
-            jsondata = json.load(read_content)
-        except Exception as e:
-            raise ValueError(f"Database error in {j}.") from e
-        if jsondata["version"] != DBVERSION:
-            raise SystemError(f"Database version error in {j}: {jsondata["version"]}")
-        for file in jsondata["data"]:
-            fe = FileEntry.from_dict(file, j)
-            db[fe.name] = fe
-
+db = readDatabase(cachedir)
 print(f"Read database: {len(db)} files.")
 
-# List all files
-inlist = []
-for folder, subs, files in os.walk(indir, followlinks=False):
-    # Trim prefix (this could be done with os.path functions?)
-    if not folder.startswith(indir):
-        raise SystemError(f"Weird folder {folder} does not start with {indir}")
-    folder = folder[len(indir)+1:]
-
-    inlist += map(lambda f: os.path.join(folder, f), files)
-
-# Sort for consistency
-inlist.sort()
-
+inlist = listFiles(indir)
 print(f"Found {len(inlist)} files.")
 
-# Database for the current output tar
-tardb = Database()
-size = 0
-totalskip = 0
-lastskip = 0
-totalwritten = 0
-
-for file in inlist:
-    fileentry = FileEntry.gen(indir, file)
-
-    # TODO: Find in database and skip if needed
-    dbfile = db.get(file)
-    if dbfile and dbfile.sha == fileentry.sha:
-        totalskip += 1
-        if totalskip >= lastskip+1000:
-            print(f"Skipped {totalskip} files so far.")
-            lastskip = totalskip
-        continue
-
-    totalwritten += 1
-
-    size += fileentry.size
-    tardb.add(fileentry)
-    if size > MINSIZE:
-        if totalskip > lastskip:
-            print(f"Skipped {totalskip} files so far.")
-            lastskip = totalskip
-
-        createTar(tardb, humanSize(size))
-        tardb = Database()
-        size = 0
-
-# Create the last archive
-if len(tardb.data) > 0:
-    createTar(tardb, humanSize(size))
-
+(totalwritten, totalskip) = createTars(db, inlist)
 print(f"Done! Wrote {totalwritten} files. Skipped {totalskip} files.")

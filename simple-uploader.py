@@ -165,13 +165,35 @@ def createTars(db, inlist, s3):
 
     return (totalwritten, totalskip)
 
+### Remote storage related functions
+
+def remoteCheck(s3):
+    files = s3.list_files()
+    # Sanity check of the files
+    jsonfiles = [file for file in files if file.startswith("db/") and file.endswith(".json")]
+    tarfiles = [file for file in files if file.startswith("data/") and file.endswith(".tar")]
+
+    for json in jsonfiles:
+        base = json.removeprefix("db/").removesuffix(".json")
+        if not "data/" + base + ".tar" in tarfiles:
+            raise SystemError(f"Error on remote: {base}.json without the corresponding tar.")
+
+    for tar in tarfiles:
+        base = tar.removeprefix("data/").removesuffix(".tar")
+        if not "db/" + base + ".json" in jsonfiles:
+            print(f"WARNING: Remote {base}.tar without the corresponding json.")
+        if files[tar].storageclass != "DEEP":
+            print(f"WARNING: Remote {tar} in incorrect storage class {files[tar].storageclass}.")
+
+    for file in files:
+        if not file in jsonfiles and not file in tarfiles:
+            print(f"WARNING: Remote {file} not supposed to be in bucket.")
+
 ### Main
 
 # 128 MB chunks is a good sweet spot pricing-wise
 # Note that chunks can be larger as we only fit in full files.
 MINSIZE=128*1024*1024
-# TODO: remove
-MINSIZE=16*1024*1024
 
 if len(sys.argv) != 3:
     print("Usage: python s3-uploader.py indir s3://bucket/target")
@@ -192,8 +214,7 @@ if not os.path.isdir(dbcachedir):
 
 print(f"Syncing database...")
 s3 = SimpleS3(outurl)
-files = s3.list_files()
-# TODO: Sanity check
+remoteCheck(s3)
 s3.download_dir(dbcachedir, "db")
 
 db = readDatabase(dbcachedir)

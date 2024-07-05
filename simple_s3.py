@@ -4,12 +4,14 @@ import boto3
 import dataclasses
 import hashlib
 import os
+import sys
 import urllib.parse
 
 @dataclasses.dataclass
 class S3File:
     name: str
     size: int
+    storageclass: str
     # TODO: Do we want to store sha as well?
 
 def addslash(s):
@@ -46,7 +48,8 @@ class SimpleS3:
                     raise SystemError(f"Weird name {name} does not start with {self.prefix}")
                 name = name[len(self.prefix):]
                 size = content["Size"]
-                self.files[name] = S3File(name, size)
+                storageclass = content["StorageClass"]
+                self.files[name] = S3File(name, size, storageclass)
         print(f"Got {len(self.files)} files in bucket folder.")
         return self.files
 
@@ -117,24 +120,53 @@ class SimpleS3:
         if targetname is None:
             targetname = os.path.basename(filename)
 
-        print(f"Uploading {targetname} to s3://{self.bucket}/{self.prefix}...")
+        sys.stdout.write(f"Uploading {targetname}...")
+        sys.stdout.flush()
         if filename in self.files:
             raise SystemError(f"Refusing to override existing file {filename} in bucket.")
 
         subdir = addslash(subdir)
         objectname = self.prefix + subdir + targetname
 
+        # TODO: set storage class
         # Upload the file
-        self.s3_client.upload_file(filename, self.bucket, objectname)
+        size = os.path.getsize(filename)
+        self.s3_client.upload_file(filename, self.bucket, objectname, Callback=ProgressPercentage(targetname, size))
+        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}.\n")
 
         # Make sure we don't accidentally upload a second time
         self.files[filename] = "Uploaded"
 
+def humanSize2(size, total):
+    suffix = ['', 'kib', 'Mib', 'Gib']
+    i = 0
+    while total >= 1024 and i < len(suffix)-1:
+        total = total // 1024
+        size = size // 1024
+        i += 1
+    stotal = str(total)
+    ssize = str(size).rjust(len(stotal), " ")
+    return f"{ssize} / {stotal} {suffix[i]}"
+
+class ProgressPercentage(object):
+    def __init__(self, filename, size):
+        self._filename = filename
+        self._size = size
+        self._seen_so_far = 0
+
+    def __call__(self, bytes_amount):
+        self._seen_so_far += bytes_amount
+        percentage = (self._seen_so_far / self._size) * 100
+        sys.stdout.write(
+            f"\rUploading {self._filename} {humanSize2(self._seen_so_far, self._size)} ({percentage:.2f}%)")
+        sys.stdout.flush()
+
 if __name__ == "__main__":
-    s3 = SimpleS3(sys.argv[1])
-    s3.list_files()
+    #s3 = SimpleS3(sys.argv[1])
+    #s3.list_files()
     dbfiles = [f for f in os.listdir(".") if f.endswith(".json")]
     dbfiles.sort()
     #for j in dbfiles:
     #    s3.upload_file(j, "db")
-    s3.download_dir("./db", "db")
+    #s3.download_dir("./db", "db")
+    print(humanSize2(1024, 104857))

@@ -48,6 +48,7 @@ class SimpleS3:
                 size = content["Size"]
                 self.files[name] = S3File(name, size)
         print(f"Got {len(self.files)} files in bucket folder.")
+        return self.files
 
     def download_dir(self, localdir, subdir=""):
         subdir = addslash(subdir)
@@ -103,7 +104,7 @@ class SimpleS3:
             localfile = os.path.join(localdir, localfilebase)
             os.rename(localfile, localfile + "~")
 
-    def upload_file(self, filename, subdir=""):
+    def upload_file(self, filename, subdir="", targetname=None):
         """Upload a file to an S3 bucket
 
         :param file_name: File to upload
@@ -113,14 +114,15 @@ class SimpleS3:
         if self.files is None:
             self.list_files()
 
-        subdir = addslash(subdir)
-        filename = subdir + os.path.basename(filename)
+        if targetname is None:
+            targetname = os.path.basename(filename)
 
-        print(f"Uploading {filename} to s3://{self.bucket}/{self.prefix}...")
+        print(f"Uploading {targetname} to s3://{self.bucket}/{self.prefix}...")
         if filename in self.files:
             raise SystemError(f"Refusing to override existing file {filename} in bucket.")
 
-        objectname = self.prefix + filename
+        subdir = addslash(subdir)
+        objectname = self.prefix + subdir + targetname
 
         # Upload the file
         self.s3_client.upload_file(filename, self.bucket, objectname)

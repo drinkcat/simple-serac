@@ -6,9 +6,10 @@ import json
 import os
 import sys
 import tarfile
+import tempfile
 from datetime import datetime, timezone
 
-import simple_s3
+from simple_s3 import SimpleS3
 
 def humanSize(size):
     suffix = ['', 'k', 'M', 'G']
@@ -106,7 +107,7 @@ def listFiles(indir):
     inlist.sort()
     return inlist
 
-def createTar(tardb, size):
+def createTar(tardb, size, s3):
     global tarfileindex
 
     basefilepath = f"{tarfileprefix}-{tarfileindex:06}"
@@ -114,17 +115,18 @@ def createTar(tardb, size):
 
     print(f"Creating tar {basefilepath} with {len(tardb.data)} files ({size}).")
 
-    # TODO: Use tmp directory
-    with tarfile.open(os.path.join(cachedir, basefilepath + ".tar"), "w") as tar:
-        for fileentry in tardb.data:
-            tar.add(os.path.join(indir, fileentry.name),
-                arcname=fileentry.name, recursive="False")
-    # TODO: Upload tar and delete
+    with tempfile.NamedTemporaryFile() as outtarobj:
+        with tarfile.open(fileobj=outtarobj, mode="w") as tar:
+            for fileentry in tardb.data:
+                tar.add(os.path.join(indir, fileentry.name),
+                    arcname=fileentry.name, recursive="False")
+        s3.upload_file(outtarobj.name, "data", basefilepath + ".tar")
 
-    tardb.writeJson(os.path.join(cachedir, basefilepath + ".json"))
-    # TODO: Upload json
+    outjson = os.path.join(dbcachedir, basefilepath + ".json")
+    tardb.writeJson(outjson)
+    s3.upload_file(outjson, "db")
 
-def createTars(db, inlist):
+def createTars(db, inlist, s3):
     # Database for the current output tar
     tardb = Database()
     size = 0
@@ -153,13 +155,13 @@ def createTars(db, inlist):
                 print(f"Skipped {totalskip} files so far.")
                 lastskip = totalskip
 
-            createTar(tardb, humanSize(size))
+            createTar(tardb, humanSize(size), s3)
             tardb = Database()
             size = 0
 
     # Create the last archive
     if len(tardb.data) > 0:
-        createTar(tardb, humanSize(size))
+        createTar(tardb, humanSize(size), s3)
 
     return (totalwritten, totalskip)
 
@@ -178,25 +180,27 @@ if len(sys.argv) != 3:
 indir = os.path.abspath(sys.argv[1])
 outurl = sys.argv[2]
 
-# TODO: Better location for database cache
-cachedir = "/home/drinkcat/.cache/simple-uploader/one/"
+# TODO: Better variable location for database cache
+saneurl = "".join([ c if c.isalnum() else "_" for c in outurl ])
+dbcachedir = os.path.join("/home/drinkcat/.cache/simple-uploader", saneurl)
 
 tarfileprefix = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 tarfileindex = 0
 
-if not os.path.isdir(cachedir):
-    os.makedirs(cachedir)
+if not os.path.isdir(dbcachedir):
+    os.makedirs(dbcachedir)
 
-# TODO: Sync database with remote
+print(f"Syncing database...")
 s3 = SimpleS3(outurl)
-s3.list_files()
+files = s3.list_files()
 # TODO: Sanity check
+s3.download_dir(dbcachedir, "db")
 
-db = readDatabase(cachedir)
+db = readDatabase(dbcachedir)
 print(f"Read database: {len(db)} files.")
 
 inlist = listFiles(indir)
 print(f"Found {len(inlist)} files.")
 
-(totalwritten, totalskip) = createTars(db, inlist)
+(totalwritten, totalskip) = createTars(db, inlist, s3)
 print(f"Done! Wrote {totalwritten} files. Skipped {totalskip} files.")

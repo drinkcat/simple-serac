@@ -1,5 +1,6 @@
 #!/bin/python
 
+import csv
 import dataclasses
 import hashlib
 import json
@@ -26,6 +27,7 @@ class DatabaseEncoder(json.JSONEncoder):
         if isinstance(o, FileEntry):
             dict = o.__dict__
             del(dict["db"])
+            del(dict["alt"])
             return dict
         elif isinstance(o, Database):
             return o.__dict__
@@ -39,6 +41,7 @@ class FileEntry:
     modified: str
     sha: str
     db: str = ""
+    alt: list('FileEntry') = dataclasses.field(default_factory=list)
 
     def sha256sum(file):
         if os.path.islink(file):
@@ -89,6 +92,11 @@ def readDatabase(dbdir):
                 raise SystemError(f"Database version error in {j}: {jsondata["version"]}")
             for file in jsondata["data"]:
                 fe = FileEntry.from_dict(file, j)
+                # Save other copies in alt
+                existing = db.get(fe.name)
+                if existing:
+                    fe.alt = [ existing ] + existing.alt
+                    existing.alt = []
                 db[fe.name] = fe
     return db
 
@@ -165,6 +173,21 @@ def createTars(db, inlist, s3):
 
     return (totalwritten, totalskip)
 
+def genCSV(db):
+    with tempfile.NamedTemporaryFile(mode='w+') as outcsvobj:
+        csvwriter = csv.writer(outcsvobj, quoting=csv.QUOTE_NONNUMERIC)
+        csvwriter.writerow(["tar File", "Filename", "Size", "Modified", "SHA"])
+        for file in db:
+            def file_to_array(fe):
+                tarname = fe.db.removesuffix(".json") + ".tar"
+                return (tarname, file, fe.size, fe.modified, fe.sha)
+
+            csvwriter.writerow(file_to_array(db[file]))
+            for altfile in db[file].alt:
+                csvwriter.writerow(file_to_array(altfile))
+
+        s3.upload_file(outcsvobj.name, "report", tarfileprefix + ".csv")
+
 ### Remote storage related functions
 
 def remoteCheck(s3):
@@ -183,11 +206,14 @@ def remoteCheck(s3):
         if "db/" + base + ".json" not in jsonfiles:
             print(f"WARNING: Remote {base}.tar without the corresponding json.")
         if files[tar].storageclass != "DEEP":
-            print(f"WARNING: Remote {tarfile} in incorrect storage class {files[tar].storageclass}.")
+            print(f"WARNING: Remote {tar} in incorrect storage class {files[tar].storageclass}.")
 
     for file in files:
-        if file not in jsonfiles and file not in tarfiles:
-            print(f"WARNING: Remote {file} not supposed to be in bucket.")
+        if file.startswith("report/") and file.endswith(".csv"):
+            continue
+        if file in jsonfiles or file in tarfiles:
+            continue
+        print(f"WARNING: Remote {file} not supposed to be in bucket.")
 
 ### Main
 
@@ -225,3 +251,10 @@ print(f"Found {len(inlist)} files.")
 
 (totalwritten, totalskip) = createTars(db, inlist, s3)
 print(f"Done! Wrote {totalwritten} files. Skipped {totalskip} files.")
+
+if totalwritten > 0:
+    print(f"Generating csv report...")
+    # Re-read the database, generate csv
+    db = readDatabase(dbcachedir)
+    genCSV(db)
+    print(f"Done!")

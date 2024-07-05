@@ -52,6 +52,7 @@ class SimpleS3:
         print(f"Got {len(self.files)} files in bucket folder.")
         return self.files
 
+    # TODO: Return stats?
     def download_dir(self, localdir, subdir=""):
         subdir = addslash(subdir)
 
@@ -75,11 +76,11 @@ class SimpleS3:
 
                 # TODO: Use hash too?
                 if self.files[file].size == stat.st_size and not os.path.islink(localfile):
-                    print(f"Local database file {localfilebase} already good.")
+                    # print(f"Local file {localfilebase} already good.")
                     # Good local copy
                     goodfiles.append(localfilebase)
                 else:
-                    print(f"Local database file {localfilebase} incorrect, moving away.")
+                    print(f"Local file {localfilebase} incorrect, moving away.")
                     os.rename(localfile, localfile + "~")
                     pull = True
             else:
@@ -131,7 +132,7 @@ class SimpleS3:
         # Upload the file
         size = os.path.getsize(filename)
         self.s3_client.upload_file(filename, self.bucket, objectname, Callback=ProgressPercentage(targetname, size))
-        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}.\n")
+        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir}.\n")
 
         # Make sure we don't accidentally upload a second time
         self.files[filename] = "Uploaded"

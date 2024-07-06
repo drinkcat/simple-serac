@@ -4,7 +4,10 @@ import boto3
 import dataclasses
 import os
 import sys
+import threading
+import time
 import urllib.parse
+from simple_utils import human_size, human_size_2
 
 @dataclasses.dataclass
 class S3File:
@@ -20,7 +23,9 @@ def addslash(s):
     return s
 
 class SimpleS3:
-    def __init__(self, url):
+    def __init__(self, url, dry_run=False):
+        self.dry_run = dry_run
+
         self.s3_client = boto3.client('s3')
         self.files = None
         parse = urllib.parse.urlparse(url)
@@ -29,7 +34,7 @@ class SimpleS3:
         self.bucket = parse.netloc
         self.prefix = addslash(parse.path)
 
-        print(f"Bucket: {self.bucket}, Prefix: '{self.prefix}'")
+        print(f"Bucket: {self.bucket}, Prefix: '{self.prefix}'{' (DRY RUN)' if self.dry_run else ''}")
 
     def list_files(self):
         self.files = {}
@@ -103,7 +108,7 @@ class SimpleS3:
                 continue
             
             # Make a backup
-            print(f"Found weird file {localfilebase} in local database, moving away.")
+            print(f"Found leftover file {localfilebase} in local database, moving away.")
             localfile = os.path.join(localdir, localfilebase)
             os.rename(localfile, localfile + "~")
 
@@ -120,46 +125,47 @@ class SimpleS3:
         if targetname is None:
             targetname = os.path.basename(filename)
 
+        subdir = addslash(subdir)
+        objectname = self.prefix + subdir + targetname
+
+        if self.dry_run:
+            print(f"DRY RUN: Would have uploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir}.")
+            return
+
         sys.stdout.write(f"Uploading {targetname}...")
         sys.stdout.flush()
         if filename in self.files:
             raise SystemError(f"Refusing to override existing file {filename} in bucket.")
 
-        subdir = addslash(subdir)
-        objectname = self.prefix + subdir + targetname
-
         # TODO: set storage class
         # Upload the file
         size = os.path.getsize(filename)
+        start = time.monotonic()
         self.s3_client.upload_file(filename, self.bucket, objectname, Callback=ProgressPercentage(targetname, size))
-        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir}.\n")
+        interval = time.monotonic() - start
+        if interval != 0:
+            speed = size/interval
+        else:
+            speed = 0
+        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({human_size(speed)}/s).\n")
 
         # Make sure we don't accidentally upload a second time
         self.files[filename] = "Uploaded"
-
-def humanSize2(size, total):
-    suffix = ['', 'kib', 'Mib', 'Gib']
-    i = 0
-    while total >= 1024 and i < len(suffix)-1:
-        total = total // 1024
-        size = size // 1024
-        i += 1
-    stotal = str(total)
-    ssize = str(size).rjust(len(stotal), " ")
-    return f"{ssize} / {stotal} {suffix[i]}"
 
 class ProgressPercentage(object):
     def __init__(self, filename, size):
         self._filename = filename
         self._size = size
         self._seen_so_far = 0
+        self._lock = threading.Lock()
 
     def __call__(self, bytes_amount):
-        self._seen_so_far += bytes_amount
-        percentage = (self._seen_so_far / self._size) * 100
-        sys.stdout.write(
-            f"\rUploading {self._filename} {humanSize2(self._seen_so_far, self._size)} ({percentage:.2f}%)")
-        sys.stdout.flush()
+        with self._lock:
+            self._seen_so_far += bytes_amount
+            percentage = (self._seen_so_far / self._size) * 100
+            sys.stdout.write(
+                f"\rUploading {self._filename} {human_size_2(self._seen_so_far, self._size)} ({percentage:.2f}%)")
+            sys.stdout.flush()
 
 if __name__ == "__main__":
     #s3 = SimpleS3(sys.argv[1])
@@ -169,4 +175,4 @@ if __name__ == "__main__":
     #for j in dbfiles:
     #    s3.upload_file(j, "db")
     #s3.download_dir("./db", "db")
-    print(humanSize2(1024, 104857))
+    #print(human_size_2(1024, 104857))

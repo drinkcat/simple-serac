@@ -19,6 +19,18 @@ class S3File:
     md5: str
     # TODO: Do we want to store sha as well?
 
+    def gen_from_s3(content, prefix):
+        name = content["Key"]
+        # Trim prefix (this could be done with os.path functions?)
+        if not name.startswith(prefix):
+            raise SystemError(f"Weird name {name} does not start with {prefix}")
+        name = name[len(prefix):]
+        size = content["Size"]
+        storageclass = content["StorageClass"]
+        # TODO: We also stored a SHA-256 but that requires one more operation.
+        md5 = content["ETag"].strip('"')
+        return S3File(name, size, storageclass, md5)
+
 def addslash(s):
     s = s.removeprefix("/")
     if s != "" and not s.endswith("/"):
@@ -48,19 +60,29 @@ class SimpleS3:
             is_truncated = response["IsTruncated"]
             if is_truncated:
                 start_after = response["Contents"][-1]["Key"]
-            for content in response.get("Contents", ()):
-                name = content["Key"]
-                # Trim prefix (this could be done with os.path functions?)
-                if not name.startswith(self.prefix):
-                    raise SystemError(f"Weird name {name} does not start with {self.prefix}")
-                name = name[len(self.prefix):]
-                size = content["Size"]
-                storageclass = content["StorageClass"]
-                # TODO: We also stored a SHA-256 but that requires one more operation.
-                md5 = content["ETag"].strip('"')
-                self.files[name] = S3File(name, size, storageclass, md5)
+            for content in response.get("Contents", {}):
+                self.files[s3file.name] = S3File.gen_from_s3(content, self.prefix)
         print(f"Got {len(self.files)} files in bucket folder.")
         return self.files
+
+    def list_versions(self):
+        latest = {}
+        outdated = {}
+        next_key_marker = ""
+        is_truncated = True
+        while is_truncated:
+            response = self.s3_client.list_object_versions(Bucket=self.bucket, Prefix=self.prefix, KeyMarker=next_key_marker)
+            is_truncated = response["IsTruncated"]
+            if is_truncated:
+                next_key_marker = response["NextKeyMarker"]
+            for content in response.get("Versions", ()):
+                s3file = S3File.gen_from_s3(content, self.prefix)
+                if content["IsLatest"]:
+                    latest[s3file.name] = s3file
+                else:
+                    outdated[s3file.name] = outdated.get(s3file.name, []) + [ s3file ]
+        print(f"Got {len(latest)} latest files in bucket folder, and {len(outdated)} outdated files.")
+        return (latest, outdated)
 
     # TODO: Return stats?
     def download_dir(self, localdir, subdir=""):
@@ -145,16 +167,16 @@ class SimpleS3:
         subdir = addslash(subdir)
         objectname = self.prefix + subdir + targetname
 
+        if targetname in self.files:
+            raise FileExistsError(f"Refusing to override existing file {targetname} in bucket.")
+
         if self.dry_run:
             print(f"DRY RUN: Would have uploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({storageclass}).")
             return
 
         sys.stdout.write(f"Uploading {targetname}...")
         sys.stdout.flush()
-        if filename in self.files:
-            raise SystemError(f"Refusing to override existing file {filename} in bucket.")
 
-        # TODO: set storage class
         # Upload the file
         size = os.path.getsize(filename)
         start = time.monotonic()
@@ -170,7 +192,7 @@ class SimpleS3:
         sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({human_size_f(speed)}/s, {storageclass}).\n")
 
         # Make sure we don't accidentally upload a second time
-        self.files[filename] = "Uploaded"
+        self.files[targetname] = "Uploaded"
 
 class ProgressPercentage(object):
     def __init__(self, filename, size):
@@ -196,6 +218,7 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--dry-run', action='store_true', help="do not actually upload anything")
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('-l', '--list', action='store_true', help="list files in bucket")
+    action.add_argument('-v', '--versions', action='store_true', help="list file versions in bucket")
     action.add_argument('-u', '--upload', action='store', type=str, metavar="INDIR", help="upload directory to s3")
     parser.add_argument('-c', '--class', action='store', dest='storageclass', type=str, default="STANDARD", help="upload class (e.g. STANDARD or DEEP_ARCHIVE)")
     parser.add_argument('s3url', help="S3 URL, i.e. s3://bucket/directory")
@@ -210,6 +233,22 @@ if __name__ == "__main__":
         for file in s3.files:
             s3file = s3.files[file]
             print(f"{file} ({s3file.size}, {s3file.storageclass})")
+    elif args.versions:
+        (latest, outdated) = s3.list_versions()
+        for file in latest:
+            s3file = latest[file]
+            print(f"{file} ({s3file.size}, {s3file.storageclass}, LATEST)")
+            if outdated.get(file):
+                for s3file in outdated[file]:
+                    print(f"  {file} ({s3file.size}, {s3file.storageclass}, OUTDATED)")
+                del(outdated[file])
+        # Leftover outdated files
+        print("Deleted files:")
+        for file in outdated:
+            prefix = ""
+            for s3file in outdated[file]:
+                print(f"  {prefix}{file} ({s3file.size}, {s3file.storageclass}, OUTDATED)")
+                prefix = "  "
     elif args.upload:
         indir = os.path.abspath(args.upload)
         if not os.path.isdir(indir):
@@ -219,4 +258,7 @@ if __name__ == "__main__":
 
         inlist = list_files(indir)
         for file in inlist:
-            s3.upload_file(os.path.join(indir, file), targetname=file, storageclass=args.storageclass)
+            try:
+                s3.upload_file(os.path.join(indir, file), targetname=file, storageclass=args.storageclass)
+            except FileExistsError:
+                print(f"WARNING: Skippping existing file {file}.")

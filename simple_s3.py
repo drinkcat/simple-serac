@@ -1,5 +1,6 @@
 #!/bin/python
 
+import argparse
 import boto3
 import dataclasses
 import hashlib
@@ -8,7 +9,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from simple_utils import human_size, human_size_2
+from simple_utils import human_size, human_size_2, list_files
 
 @dataclasses.dataclass
 class S3File:
@@ -187,11 +188,31 @@ class ProgressPercentage(object):
             sys.stdout.flush()
 
 if __name__ == "__main__":
-    #s3 = SimpleS3(sys.argv[1])
-    #s3.list_files()
-    dbfiles = [f for f in os.listdir(".") if f.endswith(".json")]
-    dbfiles.sort()
-    #for j in dbfiles:
-    #    s3.upload_file(j, "db")
-    #s3.download_dir("./db", "db")
-    #print(human_size_2(1024, 104857))
+    # TODO: Add minimum tar size as parameter
+    parser = argparse.ArgumentParser(
+                    description='Operations to S3 Glacier',
+                    epilog='https://github.com/drinkcat/simple-serac')
+    parser.add_argument('-n', '--dry-run', action='store_true', help="do not actually upload anything")
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument('-l', '--list', action='store_true', help="list files in bucket")
+    action.add_argument('-u', '--upload', action='store', type=str, metavar="INDIR", help="upload directory to s3")
+    parser.add_argument('s3url', help="S3 URL, i.e. s3://bucket/directory")
+    args = parser.parse_args()
+
+    outurl = args.s3url
+
+    s3 = SimpleS3(outurl, dry_run=args.dry_run)
+
+    if args.list:
+        s3.list_files()
+        for file in s3.files:
+            s3file = s3.files[file]
+            print(f"{file} ({s3file.size}, {s3file.storageclass})")
+    elif args.upload:
+        indir = os.path.abspath(args.upload)
+        if not os.path.isdir(indir):
+            raise SystemError(f"Input directory {indir} does not exist.")
+
+        s3.list_files()
+
+        inlist = list_files(indir)

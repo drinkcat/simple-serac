@@ -6,22 +6,7 @@ import pathlib
 
 from simple_s3 import SimpleS3
 from simple_database import BackupDatabase
-
-def list_files(indir):
-    # List all files in input directory
-    inlist = []
-    for folder, subs, files in os.walk(indir, followlinks=False):
-        # Trim prefix (this could be done with os.path functions?)
-        if not folder.startswith(indir):
-            raise SystemError(f"Weird folder {folder} does not start with {indir}")
-        folder = folder[len(indir)+1:]
-
-        inlist += map(lambda f: os.path.join(folder, f), files)
-
-    # Sort for consistency
-    inlist.sort()
-    print(f"Found {len(inlist)} files.")
-    return inlist
+from simple_utils import list_files
 
 ### Remote storage related functions
 

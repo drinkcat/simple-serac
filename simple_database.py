@@ -81,12 +81,12 @@ class BackupDatabase:
 
     # Whole database: map from filename to FileEntry
     db = None
-    # Minimum archive size
-    minsize = DEFAULT_MINSIZE
 
-    def __init__(self, dbcachedir, s3):
+    def __init__(self, dbcachedir, s3, minsize=DEFAULT_MINSIZE):
         self.dbcachedir = dbcachedir
         self.s3 = s3
+        # Minimum archive size
+        self.minsize = minsize
 
     def read_database(self):
         # Read existing database

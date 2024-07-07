@@ -10,6 +10,7 @@ Basic design philosophy:
   - Only knows how to backup normal files and symbolic links.
 - Targets Amazon S3 Deep **Glacier**: Cost of restoring many objects can be very expensive, so we bundle the files in relatively large tarball chunks (128 MiB by default).
   - Relatively small chunks make it reasonably cheap to restore a single file if needed.
+  - Chunks can be larger if the files are large enough: A single file will not stride over multiple chunks.
 - Only supports **incremental backups**: new and modified files are uploaded. No awareness of deleted files.
   - If you want to start a new full backup, chose a different bucket or directory.
 - **Simple, human readable database**: restoring is possible without special tools.

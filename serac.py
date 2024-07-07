@@ -58,6 +58,7 @@ def gen_cache_directory(outurl):
 ### Main
 
 def main():
+    # TODO: Add minimum tar size as parameter
     parser = argparse.ArgumentParser(
                     description='Backup to S3 Glacier',
                     epilog='https://github.com/drinkcat/simple-serac')

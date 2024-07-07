@@ -2,6 +2,7 @@
 
 import boto3
 import dataclasses
+import hashlib
 import os
 import sys
 import threading
@@ -14,6 +15,7 @@ class S3File:
     name: str
     size: int
     storageclass: str
+    md5: str
     # TODO: Do we want to store sha as well?
 
 def addslash(s):
@@ -53,7 +55,9 @@ class SimpleS3:
                 name = name[len(self.prefix):]
                 size = content["Size"]
                 storageclass = content["StorageClass"]
-                self.files[name] = S3File(name, size, storageclass)
+                # TODO: We also stored a SHA-256 but that requires one more operation.
+                md5 = content["ETag"].strip('"')
+                self.files[name] = S3File(name, size, storageclass, md5)
         print(f"Got {len(self.files)} files in bucket folder.")
         return self.files
 
@@ -79,13 +83,25 @@ class SimpleS3:
                 pull = False
                 stat = os.stat(localfile, follow_symlinks=False)
 
-                # TODO: Use hash too?
-                if self.files[file].size == stat.st_size and not os.path.islink(localfile):
+                bad = None
+                if os.path.islink(localfile):
+                    bad = "link"
+                elif self.files[file].size != stat.st_size:
+                    bad = "size"
+                else:
+                    # We store the SHA-256, but MD5 is readily available.
+                    with open(localfile, 'rb') as f:
+                        md5 = hashlib.file_digest(f, 'md5').hexdigest()
+                    if self.files[file].md5 != md5:
+                        print(f"{self.files[file].md5} != {md5}")
+                        bad = "hash"
+
+                if bad is None:
                     # print(f"Local file {localfilebase} already good.")
                     # Good local copy
                     goodfiles.append(localfilebase)
                 else:
-                    print(f"Local file {localfilebase} incorrect, moving away.")
+                    print(f"Local file {localfilebase} incorrect ({bad}), moving away.")
                     os.rename(localfile, localfile + "~")
                     pull = True
             else:
@@ -141,7 +157,10 @@ class SimpleS3:
         # Upload the file
         size = os.path.getsize(filename)
         start = time.monotonic()
-        self.s3_client.upload_file(filename, self.bucket, objectname, Callback=ProgressPercentage(targetname, size))
+        self.s3_client.upload_file(filename, self.bucket, objectname,
+            ExtraArgs={"ChecksumAlgorithm": "SHA256"},
+            Callback=ProgressPercentage(targetname, size),
+            )
         interval = time.monotonic() - start
         if interval != 0:
             speed = size/interval

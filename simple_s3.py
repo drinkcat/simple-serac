@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from simple_utils import human_size, human_size_2, list_files
+from simple_utils import human_size_2, human_size_f, list_files
 
 @dataclasses.dataclass
 class S3File:
@@ -129,7 +129,7 @@ class SimpleS3:
             localfile = os.path.join(localdir, localfilebase)
             os.rename(localfile, localfile + "~")
 
-    def upload_file(self, filename, subdir="", targetname=None):
+    def upload_file(self, filename, subdir="", targetname=None, storageclass="STANDARD"):
         """Upload a file to an S3 bucket
 
         :param file_name: File to upload
@@ -146,7 +146,7 @@ class SimpleS3:
         objectname = self.prefix + subdir + targetname
 
         if self.dry_run:
-            print(f"DRY RUN: Would have uploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir}.")
+            print(f"DRY RUN: Would have uploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({storageclass}).")
             return
 
         sys.stdout.write(f"Uploading {targetname}...")
@@ -159,15 +159,15 @@ class SimpleS3:
         size = os.path.getsize(filename)
         start = time.monotonic()
         self.s3_client.upload_file(filename, self.bucket, objectname,
-            ExtraArgs={"ChecksumAlgorithm": "SHA256"},
+            ExtraArgs={"ChecksumAlgorithm": "SHA256", "StorageClass": storageclass},
             Callback=ProgressPercentage(targetname, size),
             )
         interval = time.monotonic() - start
         if interval != 0:
-            speed = size/interval
+            speed = float(size) / interval
         else:
             speed = 0
-        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({human_size(speed)}/s).\n")
+        sys.stdout.write(f"\rUploaded {targetname} to s3://{self.bucket}/{self.prefix}{subdir} ({human_size_f(speed)}/s, {storageclass}).\n")
 
         # Make sure we don't accidentally upload a second time
         self.files[filename] = "Uploaded"
@@ -190,12 +190,14 @@ class ProgressPercentage(object):
 if __name__ == "__main__":
     # TODO: Add minimum tar size as parameter
     parser = argparse.ArgumentParser(
-                    description='Operations to S3 Glacier',
-                    epilog='https://github.com/drinkcat/simple-serac')
+                    description='Operations to S3',
+                    epilog='https://github.com/drinkcat/simple-serac',
+                    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-n', '--dry-run', action='store_true', help="do not actually upload anything")
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('-l', '--list', action='store_true', help="list files in bucket")
     action.add_argument('-u', '--upload', action='store', type=str, metavar="INDIR", help="upload directory to s3")
+    parser.add_argument('-c', '--class', action='store', dest='storageclass', type=str, default="STANDARD", help="upload class (e.g. STANDARD or DEEP_ARCHIVE)")
     parser.add_argument('s3url', help="S3 URL, i.e. s3://bucket/directory")
     args = parser.parse_args()
 
@@ -216,3 +218,5 @@ if __name__ == "__main__":
         s3.list_files()
 
         inlist = list_files(indir)
+        for file in inlist:
+            s3.upload_file(os.path.join(indir, file), targetname=file, storageclass=args.storageclass)

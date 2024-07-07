@@ -4,10 +4,18 @@ SIZE_SUFFIXES = ['B', 'KiB', 'MiB', 'GiB']
 
 def human_size(size):
     i = 0
+    size = int(size)
     while size >= 1024 and i < len(SIZE_SUFFIXES)-1:
         size = size // 1024
         i += 1
     return f"{size} {SIZE_SUFFIXES[i]}"
+
+def human_size_f(size):
+    i = 0
+    while size >= 1024 and i < len(SIZE_SUFFIXES)-1:
+        size = size / 1024
+        i += 1
+    return f"{size:.3f} {SIZE_SUFFIXES[i]}"
 
 def human_size_2(size, total):
     i = 0
@@ -37,4 +45,5 @@ def list_files(indir):
 
 if __name__ == "__main__":
     print(human_size(1024))
+    print(human_size_f(1055))
     print(human_size_2(1024, 104857))

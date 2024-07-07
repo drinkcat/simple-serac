@@ -36,15 +36,20 @@ https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html) d
 
 This is a manual process, by design. At least for now.
 
+Go to AWS console:
+
 - Download the latest report in `reports/`.
 - Find which archive contains the file you want.
-- Move the archive in `data/` from Glacier to Standard (**TODO** details for that, is it better to make a copy?). This can take multiple hours.
+- Restore the archive in `data/` from Glacier Deep Archive
+  - Select a short number of days (e.g. 7 days)
+  - Select `Bulk retrieval` for cheapest/slowest restore.
+- Wait for the restore process to complete
 - Download the archive, extract the file.
-- Move the archive in `data/` back to Glacier (**TODO** details)
 
 ### Restore all files
 
-- Move all files in `data/` from Glacier to Standard (**TODO** details for that)
+- Restore all files in `data/` from Glacier Deep Archive (see above)
+- Wait for the restore process to complete
 - Download all data files in `data/`
 
 ## Design

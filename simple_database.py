@@ -111,7 +111,7 @@ class BackupDatabase:
                     self.db[fe.name] = fe
         print(f"Read database: {len(self.db)} files.")
 
-    def create_tar(self, tardb, indir, basefilepath, size):
+    def create_tar(self, tardb, indir, basefilepath, size, storageclass):
         print(f"Creating tar {basefilepath} with {len(tardb.data)} files ({human_size(size)}).")
 
         with tempfile.NamedTemporaryFile() as outtarobj:
@@ -119,13 +119,13 @@ class BackupDatabase:
                 for fileentry in tardb.data:
                     tar.add(os.path.join(indir, fileentry.name),
                         arcname=fileentry.name, recursive="False")
-            self.s3.upload_file(outtarobj.name, "data", basefilepath + ".tar")
+            self.s3.upload_file(outtarobj.name, "data", basefilepath + ".tar", storageclass=storageclass)
 
         outjson = os.path.join(self.dbcachedir, basefilepath + ".json")
         tardb.writeJson(outjson)
-        self.s3.upload_file(outjson, "db")
+        self.s3.upload_file(outjson, "db", storageclass="STANDARD")
 
-    def create_tars(self, indir, inlist):
+    def create_tars(self, indir, inlist, storageclass):
         class FileNameGen:
             def __init__(self, prefix):
                 self.prefix = prefix
@@ -165,13 +165,13 @@ class BackupDatabase:
                     print(f"Skipped {totalskip} files so far.")
                     lastskip = totalskip
 
-                self.create_tar(tardb, indir, filenamegen.next(), size)
+                self.create_tar(tardb, indir, filenamegen.next(), size, storageclass)
                 tardb = DatabaseFile()
                 size = 0
 
         # Create the last archive
         if len(tardb.data) > 0:
-            self.create_tar(tardb, indir, filenamegen.next(), size)
+            self.create_tar(tardb, indir, filenamegen.next(), size, storageclass)
 
         print(f"Done! Wrote {totalwritten} files. Skipped {totalskip} files.")
         return (totalwritten, totalskip)

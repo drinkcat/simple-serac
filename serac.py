@@ -25,7 +25,7 @@ def remote_check(s3):
         base = tar.removeprefix("data/").removesuffix(".tar")
         if "db/" + base + ".json" not in jsonfiles:
             print(f"WARNING: Remote {base}.tar without the corresponding json.")
-        if files[tar].storageclass != "DEEP":
+        if files[tar].storageclass != "DEEP_ARCHIVE":
             print(f"WARNING: Remote {tar} in incorrect storage class {files[tar].storageclass}.")
 
     for file in files:
@@ -57,6 +57,9 @@ def main():
         raise SystemError(f"Input directory {indir} does not exist.")
     outurl = args.s3url
 
+    # Storage class for the tarballs (json always in "STANDARD")
+    storageclass = "DEEP_ARCHIVE"
+
     # Create Database cache directory
     dbcachedir = gen_cache_directory(outurl)
     if not os.path.isdir(dbcachedir):
@@ -73,7 +76,7 @@ def main():
 
     # List local files and back them up
     inlist = list_files(indir)
-    (totalwritten, totalskip) = backupdb.create_tars(indir, inlist)
+    (totalwritten, totalskip) = backupdb.create_tars(indir, inlist, storageclass)
 
     if totalwritten > 0:
         print("Generating csv report...")

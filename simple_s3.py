@@ -121,6 +121,7 @@ class SimpleS3:
                 elif self.files[file].size != stat.st_size:
                     bad = "size"
                 else:
+                    # TODO: This will never match if the file is multipart
                     # We store the SHA-256, but MD5 is readily available.
                     with open(localfile, 'rb') as f:
                         md5 = hashlib.file_digest(f, 'md5').hexdigest()
@@ -202,6 +203,12 @@ class SimpleS3:
 
         # Make sure we don't accidentally upload a second time
         self.files[targetname] = "Uploaded"
+
+    # TODO: Fully implement this
+    def get_file_attributes(self, name):
+        response = self.s3_client.get_object_attributes(Bucket=self.bucket, Key=self.prefix + s3file.name,
+            ObjectAttributes=['ETag', 'Checksum', 'ObjectParts', 'StorageClass', 'ObjectSize'])
+        return response
 
 class ProgressPercentage(object):
     def __init__(self, filename, size):

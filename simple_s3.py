@@ -29,6 +29,12 @@ class S3File:
         storageclass = content["StorageClass"]
         # TODO: We also stored a SHA-256 but that requires one more operation.
         md5 = content["ETag"].strip('"')
+        # TODO: Hack, for now, add restore status to the class string
+        if "RestoreStatus" in content:
+            if content["RestoreStatus"]["IsRestoreInProgress"]:
+                storageclass += " (restoring)"
+            else:
+                storageclass += f" (restored until {content["RestoreStatus"]["RestoreExpiryDate"]})"
         return S3File(name, size, storageclass, md5)
 
 def addslash(s):
@@ -56,12 +62,14 @@ class SimpleS3:
         start_after = ""
         is_truncated = True
         while is_truncated:
-            response = self.s3_client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix, StartAfter=start_after)
+            response = self.s3_client.list_objects_v2(Bucket=self.bucket, Prefix=self.prefix,
+                StartAfter=start_after, OptionalObjectAttributes=['RestoreStatus'])
             is_truncated = response["IsTruncated"]
             if is_truncated:
                 start_after = response["Contents"][-1]["Key"]
             for content in response.get("Contents", {}):
-                self.files[s3file.name] = S3File.gen_from_s3(content, self.prefix)
+                s3file = S3File.gen_from_s3(content, self.prefix)
+                self.files[s3file.name] = s3file
         print(f"Got {len(self.files)} files in bucket folder.")
         return self.files
 
@@ -71,7 +79,8 @@ class SimpleS3:
         next_key_marker = ""
         is_truncated = True
         while is_truncated:
-            response = self.s3_client.list_object_versions(Bucket=self.bucket, Prefix=self.prefix, KeyMarker=next_key_marker)
+            response = self.s3_client.list_object_versions(Bucket=self.bucket, Prefix=self.prefix,
+                    KeyMarker=next_key_marker, OptionalObjectAttributes=['RestoreStatus'])
             is_truncated = response["IsTruncated"]
             if is_truncated:
                 next_key_marker = response["NextKeyMarker"]

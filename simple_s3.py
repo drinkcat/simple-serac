@@ -5,6 +5,7 @@ import boto3
 import dataclasses
 import hashlib
 import os
+import pprint
 import sys
 import threading
 import time
@@ -210,6 +211,23 @@ class SimpleS3:
             ObjectAttributes=['ETag', 'Checksum', 'ObjectParts', 'StorageClass', 'ObjectSize'])
         return response
 
+    # Dump bucket configuration (at least what we care about)
+    def get_bucket_configuration(self):
+        config = {}
+
+        config["acl"] = self.s3_client.get_bucket_acl(Bucket=self.bucket)
+        config["encryption"] = self.s3_client.get_bucket_encryption(Bucket=self.bucket)
+        config["lifecycle"] = self.s3_client.get_bucket_lifecycle_configuration(Bucket=self.bucket)
+        config["notification"] = self.s3_client.get_bucket_notification_configuration(Bucket=self.bucket)
+        config["public_access_block"] = self.s3_client.get_public_access_block(Bucket=self.bucket)
+        config["versioning"] = self.s3_client.get_bucket_versioning(Bucket=self.bucket)
+
+        # Remove ResponseMetadata
+        for key in config:
+            del config[key]['ResponseMetadata']
+
+        return config
+
 class ProgressPercentage(object):
     def __init__(self, filename, size):
         self._filename = filename
@@ -235,6 +253,7 @@ if __name__ == "__main__":
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('-l', '--list', action='store_true', help="list files in bucket")
     action.add_argument('-v', '--versions', action='store_true', help="list file versions in bucket")
+    action.add_argument('-d', '--dump', action='store_true', help="dump bucket configuration")
     action.add_argument('-u', '--upload', action='store', type=str, metavar="INDIR", help="upload directory to s3")
     parser.add_argument('-c', '--class', action='store', dest='storageclass', type=str, default="STANDARD", help="upload class (e.g. STANDARD or DEEP_ARCHIVE)")
     parser.add_argument('s3url', help="S3 URL, i.e. s3://bucket/directory")
@@ -265,6 +284,9 @@ if __name__ == "__main__":
             for s3file in outdated[file]:
                 print(f"  {prefix}{file} ({s3file.size}, {s3file.storageclass}, OUTDATED)")
                 prefix = "  "
+    elif args.dump:
+        config = s3.get_bucket_configuration()
+        pprint.PrettyPrinter().pprint(config)
     elif args.upload:
         indir = os.path.abspath(args.upload)
         if not os.path.isdir(indir):

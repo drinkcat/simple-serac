@@ -75,9 +75,9 @@ class DatabaseFile:
             json.dump(self, dbfile, cls=DatabaseFileEncoder, indent=4)
 
 class BackupDatabase:
-    # 128 MB chunk is a good sweet spot pricing-wise
+    # 256 MB chunk is a good sweet spot pricing-wise
     # Note that chunks can be larger as we only fit in full files.
-    DEFAULT_MINSIZE=128*1024*1024
+    DEFAULT_MINSIZE=256*1024*1024
 
     # Whole database: map from filename to FileEntry
     db = None

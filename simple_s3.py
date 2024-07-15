@@ -45,6 +45,9 @@ def addslash(s):
     return s
 
 class SimpleS3:
+    # TODO: Make this a parameter, chunk size for multipart upload
+    DEFAULT_CHUNKSIZE=32*1024*1024
+
     def __init__(self, url, dry_run=False):
         self.dry_run = dry_run
 
@@ -55,6 +58,9 @@ class SimpleS3:
             raise SystemError(f"Bad URL {url} does not start with s3.")
         self.bucket = parse.netloc
         self.prefix = addslash(parse.path)
+
+        self.transferconfig = boto3.s3.transfer.TransferConfig(
+            multipart_threshold=self.DEFAULT_CHUNKSIZE, multipart_chunksize=self.DEFAULT_CHUNKSIZE)
 
         print(f"Bucket: {self.bucket}, Prefix: '{self.prefix}'{' (DRY RUN)' if self.dry_run else ''}")
 
@@ -194,6 +200,7 @@ class SimpleS3:
         self.s3_client.upload_file(filename, self.bucket, objectname,
             ExtraArgs={"ChecksumAlgorithm": "SHA256", "StorageClass": storageclass},
             Callback=ProgressPercentage(targetname, size),
+            Config=self.transferconfig
             )
         interval = time.monotonic() - start
         if interval != 0:

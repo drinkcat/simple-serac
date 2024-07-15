@@ -207,7 +207,7 @@ class SimpleS3:
 
     # TODO: Fully implement this
     def get_file_attributes(self, name):
-        response = self.s3_client.get_object_attributes(Bucket=self.bucket, Key=self.prefix + s3file.name,
+        response = self.s3_client.get_object_attributes(Bucket=self.bucket, Key=self.prefix + name,
             ObjectAttributes=['ETag', 'Checksum', 'ObjectParts', 'StorageClass', 'ObjectSize'])
         return response
 
@@ -255,6 +255,7 @@ if __name__ == "__main__":
     action.add_argument('-v', '--versions', action='store_true', help="list file versions in bucket")
     action.add_argument('-d', '--dump', action='store_true', help="dump bucket configuration")
     action.add_argument('-u', '--upload', action='store', type=str, metavar="INDIR", help="upload directory to s3")
+    action.add_argument('-f', '--file', action='store', type=str, help="dump file attributes")
     parser.add_argument('-c', '--class', action='store', dest='storageclass', type=str, default="STANDARD", help="upload class (e.g. STANDARD or DEEP_ARCHIVE)")
     parser.add_argument('s3url', help="S3 URL, i.e. s3://bucket/directory")
     args = parser.parse_args()
@@ -263,11 +264,30 @@ if __name__ == "__main__":
 
     s3 = SimpleS3(outurl, dry_run=args.dry_run)
 
-    if args.list:
+    if args.dump:
+        config = s3.get_bucket_configuration()
+        pprint.PrettyPrinter().pprint(config)
+    elif args.file:
+        fileattr = s3.get_file_attributes(args.file)
+        pprint.PrettyPrinter().pprint(fileattr)
+    elif args.list:
         s3.list_files()
         for file in s3.files:
             s3file = s3.files[file]
             print(f"{file} ({s3file.size}, {s3file.storageclass})")
+    elif args.upload:
+        indir = os.path.abspath(args.upload)
+        if not os.path.isdir(indir):
+            raise SystemError(f"Input directory {indir} does not exist.")
+
+        s3.list_files()
+
+        inlist = list_files(indir)
+        for file in inlist:
+            try:
+                s3.upload_file(os.path.join(indir, file), targetname=file, storageclass=args.storageclass)
+            except FileExistsError:
+                print(f"WARNING: Skippping existing file {file}.")
     elif args.versions:
         (latest, outdated) = s3.list_versions()
         for file in latest:
@@ -284,19 +304,3 @@ if __name__ == "__main__":
             for s3file in outdated[file]:
                 print(f"  {prefix}{file} ({s3file.size}, {s3file.storageclass}, OUTDATED)")
                 prefix = "  "
-    elif args.dump:
-        config = s3.get_bucket_configuration()
-        pprint.PrettyPrinter().pprint(config)
-    elif args.upload:
-        indir = os.path.abspath(args.upload)
-        if not os.path.isdir(indir):
-            raise SystemError(f"Input directory {indir} does not exist.")
-
-        s3.list_files()
-
-        inlist = list_files(indir)
-        for file in inlist:
-            try:
-                s3.upload_file(os.path.join(indir, file), targetname=file, storageclass=args.storageclass)
-            except FileExistsError:
-                print(f"WARNING: Skippping existing file {file}.")

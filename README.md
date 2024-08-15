@@ -2,15 +2,18 @@
 
 A very simple backup system that uploads data in large tarballs to Amazon S3 Deep Glacier.
 
+A short introduction of Glacier can be found on my [blog](https://drinkc.at/blog/2024/07/09/backup-to-glacier/), as well as
+an extensive [cost analysis](https://drinkc.at/blog/2024/07/09/backup-to-glacier-calc/).
+
 Basic design philosophy:
 
 - Targets **infrequent backups** of relatively **large files** (~megabytes), e.g. a photo library.
   - Assumes you have enough RAM to keep the list of all files in memory (this shouldn't be a problem unless you have millions of files).
   - Do not use this to backup small files, e.g. your home directory. Use more suited tools like [duplicity](https://duplicity.us/).
   - Only knows how to backup normal files and symbolic links.
-- Targets Amazon S3 Deep **Glacier**: Cost of restoring many objects can be very expensive, so we bundle the files in relatively large tarball chunks (128 MiB by default).
+- Targets Amazon S3 Deep **Glacier**: Cost of restoring many objects can be very expensive, so we bundle the files in relatively large tarball chunks (256 MiB by default).
   - Relatively small chunks make it reasonably cheap to restore a single file if needed.
-  - Chunks can be larger if the files are large enough: A single file will not stride over multiple chunks.
+  - Most chunks will be somewhat larger than the set limit, as a single file will never stride over multiple chunks.
 - Only supports **incremental backups**: new and modified files are uploaded. No awareness of deleted files.
   - If you want to start a new full backup, chose a different bucket or directory.
 - **Simple, human readable database**: restoring is possible without special tools.
@@ -19,10 +22,14 @@ Basic design philosophy:
 
 ## Setup
 
-Create an AWS account, and an IAM identity, and setup credentials.
+Create an AWS account, and an IAM identity, and setup credentials. I documented the setup on my
+[blog](https://drinkc.at/blog/2024/07/13/backup-to-glacier-setup/).
 
-[Boto3 Quick Start](
-https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html) documentation is a good place to start. `boto3` is a dependency so install that as well.
+Follow the follow 2 sections of [Boto3 Quick Start](
+https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html):
+
+ - Installation: `boto3` is a dependency.
+ - Configuration: Follow this to install your credentials (I recommend using a separate "bot" user, see blog post above).
 
 ## Usage
 
@@ -59,7 +66,7 @@ See philosophy above.
 The S3 bucket directory contains 3 subdirectories:
 
 - **Database**: `db/*.json` (in AWS `STANDARD` storage)
-- **Data**: `data/*.tar` (in AWS `GLACIER` storage **TODO**)
+- **Data**: `data/*.tar` (in AWS `GLACIER` storage)
 - **Reports**: `reports/*.csv` (in AWS `STANDARD` storage)
 
 ### Database
@@ -85,7 +92,9 @@ For each file in the tarball, we save the name, size, modified time, and SHA-256
 
 While the json files are technically human-readable, finding a target file in them would be a bit difficult: There can be hundreds of them, and the content is not terribly easy to `grep`.
 
-Therefore, at the end of the backup process, the tool creates a `.csv` report in `reports/` that can be imported into a spreadsheet program. Only the last report needs to be downloaded.
+Therefore, at the end of the backup process, the tool creates a `.csv` report in `reports/` that can be imported into a spreadsheet app if needed for easier visualization.
+
+Only the last report needs to be downloaded: it aggregates data from all incremental backups.
 
 ### Runtime
 
@@ -97,9 +106,9 @@ At runtime, the tool does the following:
 - Read and parse the database.
 - List all files in the local directory:
   - For each file, see if there is already and entry in the database, if so, compute the SHA-256. If the file is new, or the SHA-256 differs, mark the file for upload.
-  - Once the size of the files marked for upload exceeds the chunk size (128 MiB):
+  - Once the size of the files marked for upload exceeds the chunk size (256 MiB):
     - Generate a tarball named `YYYYMMDD-HHMMSS-0000iii.tar` (date, time, and an increasing index `i`) and upload the tarball to S3.
     - Generate the database file `YYYYMMDD-HHMMSS-0000iii.json` and upload it.
-      - (We do it in this order as a lone tarball without corresponding database would have no impact apart from a little of lost storage.)
+      - (We do it in this order as a lone tarball without corresponding database would have no impact apart from a little bit of wasted storage.)
     - Continue processing files.
 - Generate a report `csv` file and upload it to S3.
